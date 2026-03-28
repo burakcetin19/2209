@@ -31,7 +31,7 @@ def generate_launch_description():
 
         # 1. Ignition/Gazebo Harmonic sunucusu + GUI
         ExecuteProcess(
-            cmd=['gz', 'sim', LaunchConfiguration('world'), '-v', '4'],
+            cmd=['gz', 'sim', '-r', LaunchConfiguration('world'), '-v', '4'],
             output='screen',
         ),
 
@@ -75,8 +75,6 @@ def generate_launch_description():
                 '/aircraft_taxi/odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                 # tf: GZ -> ROS2
                 '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
-                # kamera görüntüsü: GZ -> ROS2
-                '/aircraft_taxi/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
                 # kamera info: GZ -> ROS2
                 '/aircraft_taxi/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
                 # lidar: GZ -> ROS2
@@ -84,6 +82,15 @@ def generate_launch_description():
                 # joint states: GZ -> ROS2
                 '/aircraft_taxi/joint_states@sensor_msgs/msg/JointState[gz.msgs.Model',
             ],
+            output='screen',
+        ),
+
+        # 5. Kamera görüntüsü için ayrı bridge (ros_gz_image daha güvenilir)
+        Node(
+            package='ros_gz_image',
+            executable='image_bridge',
+            name='camera_image_bridge',
+            arguments=['/aircraft_taxi/image_raw'],
             output='screen',
         ),
 

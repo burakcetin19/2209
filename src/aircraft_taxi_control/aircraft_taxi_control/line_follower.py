@@ -139,9 +139,9 @@ class LineFollower(Node):
 
         # ── ROS arayüzleri ────────────────────────────────────────────
         qos_camera = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+            reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1
+            depth=10
         )
         qos_cmd = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -163,17 +163,8 @@ class LineFollower(Node):
             qos_camera
         )
 
-        # ── cv2 debug penceresi ───────────────────────────────────────
+        # gui_available: main() tarafından pencere açılırsa True yapılır
         self.gui_available = False
-        try:
-            cv2.namedWindow('Aircraft Taxi — Kamera', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('Aircraft Taxi — Kamera', 800, 600)
-            self.gui_available = True
-        except Exception as e:
-            self.get_logger().warn(
-                f'cv2 penceresi açılamadı (headless ortam?): {e}\n'
-                'Klavye kontrolü devre dışı. ROS topic\'i kullanın.'
-            )
 
         # ── İşleme thread'i ───────────────────────────────────────────
         self.latest_image  = None
@@ -187,11 +178,8 @@ class LineFollower(Node):
         )
         self._proc_thread.start()
 
-        # 20 Hz kontrol timer'ı (her zaman aktif)
-        self.create_timer(0.05,  self._control_timer_callback)
-        # 30 Hz GUI + klavye timer'ı (sadece pencere açıksa)
-        if self.gui_available:
-            self.create_timer(0.033, self._gui_timer_callback)
+        # 20 Hz kontrol timer'ı
+        self.create_timer(0.05, self._control_timer_callback)
 
         self._print_controls()
 
@@ -463,7 +451,6 @@ class LineFollower(Node):
             self.current_steering = 0.0
             self.running = False
             self.cmd_pub.publish(Twist())
-            rclpy.shutdown()
 
     # ──────────────────────────────────────────────────────────────────
     # Merkez çizgisi çıkarımı: kontür + çoklu dilim
@@ -614,17 +601,48 @@ def main(args=None):
     rclpy.init(args=args)
     try:
         node = LineFollower()
-        rclpy.spin(node)
     except FileNotFoundError:
-        pass
+        rclpy.shutdown()
+        return
+
+    # cv2 penceresi ana thread'de açılmalı (Linux/X11 zorunluluğu)
+    cv2.namedWindow('Aircraft Taxi — Kamera', cv2.WINDOW_NORMAL)
+    cv2.resizeWindow('Aircraft Taxi — Kamera', 800, 600)
+
+    # ROS2 spin arka thread'de çalışır
+    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spin_thread.start()
+
+    placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(placeholder, 'Kamera bekleniyor...',
+                (160, 230), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+    cv2.putText(placeholder, 'SPACE:Otonom  WASD:Manuel  Q:Cikis',
+                (120, 290), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 150, 150), 1)
+
+    try:
+        while rclpy.ok() and node.running:
+            with node.image_lock:
+                frame = node.display_frame
+
+            cv2.imshow('Aircraft Taxi — Kamera',
+                       frame if frame is not None else placeholder)
+
+            key = cv2.waitKey(33) & 0xFF   # ~30 Hz, X11 event loop
+            if key != 255:
+                node._handle_keyboard(key)
+
     except KeyboardInterrupt:
         pass
     finally:
+        node.running = False
         try:
-            cv2.destroyAllWindows()
+            node.cmd_pub.publish(Twist())
         except Exception:
             pass
-        rclpy.shutdown()
+        cv2.destroyAllWindows()
+        if rclpy.ok():
+            rclpy.shutdown()
+        spin_thread.join(timeout=2.0)
 
 
 if __name__ == '__main__':
