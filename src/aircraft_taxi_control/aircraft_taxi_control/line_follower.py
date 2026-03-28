@@ -63,9 +63,9 @@ class LineFollower(Node):
 
         # ── Parametreler ──────────────────────────────────────────────
         self.declare_parameter('model_path',            '')
-        self.declare_parameter('linear_speed',          1.5)
-        self.declare_parameter('speed_slow',            0.8)
-        self.declare_parameter('manual_speed',          1.2)
+        self.declare_parameter('linear_speed',          0.5)   # bu robot 0.5 m/s ile çalışır
+        self.declare_parameter('speed_slow',            0.3)
+        self.declare_parameter('manual_speed',          0.5)
         self.declare_parameter('kp_lateral',            0.25)
         self.declare_parameter('kp_heading',            0.15)
         self.declare_parameter('kd_lateral',            0.35)
@@ -79,6 +79,7 @@ class LineFollower(Node):
         self.declare_parameter('inference_width',       320)
         self.declare_parameter('inference_height',      240)
         self.declare_parameter('debug_image',           True)
+        self.declare_parameter('autostart',             True)  # başlangıçta otonom modu aç
 
         model_path            = self.get_parameter('model_path').value
         self.linear_speed     = self.get_parameter('linear_speed').value
@@ -97,6 +98,7 @@ class LineFollower(Node):
         inf_w                  = int(self.get_parameter('inference_width').value)
         inf_h                  = int(self.get_parameter('inference_height').value)
         self.debug_image       = self.get_parameter('debug_image').value
+        self.autostart         = bool(self.get_parameter('autostart').value)
         self.inference_size    = (inf_w, inf_h)
 
         # Model yükle
@@ -116,8 +118,8 @@ class LineFollower(Node):
         self.get_logger().info('Model yüklendi.')
 
         # ── Mod ve kontrol durumu ─────────────────────────────────────
-        self.vision_active    = False   # True → otonom mod
-        self.manual_mode      = False   # True → WASD kontrolü
+        self.vision_active    = self.autostart  # autostart=True ise hemen otonom başla
+        self.manual_mode      = False           # True → WASD kontrolü
         self.manual_linear    = 0.0
         self.manual_angular   = 0.0
 
@@ -162,8 +164,16 @@ class LineFollower(Node):
         )
 
         # ── cv2 debug penceresi ───────────────────────────────────────
-        cv2.namedWindow('Aircraft Taxi — Kamera', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Aircraft Taxi — Kamera', 800, 600)
+        self.gui_available = False
+        try:
+            cv2.namedWindow('Aircraft Taxi — Kamera', cv2.WINDOW_NORMAL)
+            cv2.resizeWindow('Aircraft Taxi — Kamera', 800, 600)
+            self.gui_available = True
+        except Exception as e:
+            self.get_logger().warn(
+                f'cv2 penceresi açılamadı (headless ortam?): {e}\n'
+                'Klavye kontrolü devre dışı. ROS topic\'i kullanın.'
+            )
 
         # ── İşleme thread'i ───────────────────────────────────────────
         self.latest_image  = None
@@ -177,19 +187,24 @@ class LineFollower(Node):
         )
         self._proc_thread.start()
 
-        # 20 Hz kontrol timer'ı
+        # 20 Hz kontrol timer'ı (her zaman aktif)
         self.create_timer(0.05,  self._control_timer_callback)
-        # 30 Hz GUI + klavye timer'ı
-        self.create_timer(0.033, self._gui_timer_callback)
+        # 30 Hz GUI + klavye timer'ı (sadece pencere açıksa)
+        if self.gui_available:
+            self.create_timer(0.033, self._gui_timer_callback)
 
         self._print_controls()
 
     # ──────────────────────────────────────────────────────────────────
     def _print_controls(self):
+        mod_str = 'OTONOM (autostart=true)' if self.autostart else 'BEKLEMEDE (autostart=false)'
         lines = [
             '═' * 52,
             '  Aircraft Taxi — Çizgi Takip Sistemi',
             '═' * 52,
+            f'  Başlangıç modu : {mod_str}',
+            f'  İleri hız      : {self.linear_speed} m/s',
+            '─' * 52,
             '  SPACE : Otonom modu başlat / durdur',
             '  W     : Manuel ileri',
             '  S     : Dur',

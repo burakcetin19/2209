@@ -22,16 +22,20 @@ def generate_launch_description():
             description='YOLOv8 segmentasyon modeli (.pt dosyası)'
         ),
         DeclareLaunchArgument(
-            'linear_speed', default_value='1.5',
+            'linear_speed', default_value='0.5',
             description='Otonom mod ileri hızı (m/s)'
         ),
         DeclareLaunchArgument(
-            'speed_slow', default_value='0.8',
+            'speed_slow', default_value='0.3',
             description='Dönüş / yüksek sapma hızı (m/s)'
         ),
         DeclareLaunchArgument(
-            'manual_speed', default_value='1.2',
+            'manual_speed', default_value='0.5',
             description='Manuel mod hızı (m/s)'
+        ),
+        DeclareLaunchArgument(
+            'autostart', default_value='true',
+            description='Başlangıçta otonom modu otomatik aç (true/false)'
         ),
         DeclareLaunchArgument(
             'kp_lateral', default_value='0.25',
@@ -86,6 +90,7 @@ def generate_launch_description():
                 'kd_heading':           LaunchConfiguration('kd_heading'),
                 'max_steering':         LaunchConfiguration('max_steering'),
                 'blind_turn_steering':  LaunchConfiguration('blind_turn_steering'),
+                'autostart':            LaunchConfiguration('autostart'),
                 'debug_image':          LaunchConfiguration('debug_image'),
                 'use_sim_time':         True,
             }],
