@@ -1,0 +1,408 @@
+<?xml version="1.0"?>
+<robot name="aircraft_taxi" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ============================================================ -->
+  <!-- PARAMETRELER                                                  -->
+  <!-- ============================================================ -->
+
+  <!-- Gövde boyutları -->
+  <xacro:property name="body_length"   value="3.0"/>
+  <xacro:property name="body_width"    value="0.8"/>
+  <xacro:property name="body_height"   value="0.4"/>
+  <xacro:property name="body_mass"     value="60.0"/>
+
+  <!-- Kanat boyutları -->
+  <xacro:property name="wing_length"   value="0.6"/>
+  <xacro:property name="wing_span"     value="3.6"/>
+  <xacro:property name="wing_thick"    value="0.05"/>
+
+  <!-- Kuyruk fin boyutları -->
+  <xacro:property name="tail_height"   value="0.5"/>
+  <xacro:property name="tail_length"   value="0.5"/>
+  <xacro:property name="tail_thick"    value="0.04"/>
+
+  <!-- Tekerlek parametreleri -->
+  <xacro:property name="wheel_radius"     value="0.18"/>
+  <xacro:property name="wheel_width"      value="0.10"/>
+  <xacro:property name="wheel_mass"       value="3.0"/>
+  <xacro:property name="wheel_separation" value="0.70"/>
+
+  <!-- Arka tekerlek X konumu (gövde merkezinden) -->
+  <xacro:property name="rear_wheel_x"  value="-0.8"/>
+
+  <!-- Burun tekeri X konumu -->
+  <xacro:property name="caster_x"      value="1.1"/>
+  <xacro:property name="caster_radius" value="0.12"/>
+
+  <!-- Kamera konumu (gövde ön-altı, zemine ~30° bakış) -->
+  <xacro:property name="cam_x"    value="1.3"/>
+  <xacro:property name="cam_z"    value="-0.15"/>
+  <xacro:property name="cam_pitch" value="0.523"/>   <!-- ~30 derece -->
+
+  <!-- Lidar konumu (gövde ön-üstü) -->
+  <xacro:property name="lidar_x"  value="1.1"/>
+  <xacro:property name="lidar_z"  value="0.25"/>
+
+  <!-- Inertia yardımcı makro -->
+  <xacro:macro name="box_inertia" params="mass x y z">
+    <inertial>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass*(y*y+z*z)/12.0}"
+        ixy="0" ixz="0"
+        iyy="${mass*(x*x+z*z)/12.0}"
+        iyz="0"
+        izz="${mass*(x*x+y*y)/12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="cylinder_inertia" params="mass r h">
+    <inertial>
+      <mass value="${mass}"/>
+      <inertia
+        ixx="${mass*(3*r*r+h*h)/12.0}"
+        ixy="0" ixz="0"
+        iyy="${mass*(3*r*r+h*h)/12.0}"
+        iyz="0"
+        izz="${mass*r*r/2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ============================================================ -->
+  <!-- BAĞLANTI: base_link                                           -->
+  <!-- ============================================================ -->
+  <link name="base_link"/>
+
+  <!-- ============================================================ -->
+  <!-- GÖVDE (CHASSIS)                                               -->
+  <!-- ============================================================ -->
+  <joint name="base_to_chassis" type="fixed">
+    <parent link="base_link"/>
+    <child  link="chassis"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="chassis">
+    <xacro:box_inertia mass="${body_mass}" x="${body_length}" y="${body_width}" z="${body_height}"/>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+      <material name="aircraft_white">
+        <color rgba="0.9 0.9 0.9 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- KANATLAR (sadece görsel)                                      -->
+  <!-- ============================================================ -->
+  <joint name="chassis_to_wings" type="fixed">
+    <parent link="chassis"/>
+    <child  link="wings"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="wings">
+    <visual>
+      <origin xyz="0 0 0.05" rpy="0 0 0"/>
+      <geometry>
+        <box size="${wing_length} ${wing_span} ${wing_thick}"/>
+      </geometry>
+      <material name="aircraft_white">
+        <color rgba="0.9 0.9 0.9 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- KUYRUK FİN (sadece görsel)                                    -->
+  <!-- ============================================================ -->
+  <joint name="chassis_to_tail_fin" type="fixed">
+    <parent link="chassis"/>
+    <child  link="tail_fin"/>
+    <origin xyz="${-body_length/2 + tail_length/2} 0 ${body_height/2 + tail_height/2}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="tail_fin">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${tail_length} ${tail_thick} ${tail_height}"/>
+      </geometry>
+      <material name="aircraft_yellow">
+        <color rgba="0.9 0.8 0.0 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- SOL ARKA TEKERLEK                                             -->
+  <!-- ============================================================ -->
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="chassis"/>
+    <child  link="left_wheel"/>
+    <origin xyz="${rear_wheel_x} ${wheel_separation/2} ${-body_height/2}" rpy="-${pi/2} 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <link name="left_wheel">
+    <xacro:cylinder_inertia mass="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    <visual>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+      <material name="wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- SAĞ ARKA TEKERLEK                                             -->
+  <!-- ============================================================ -->
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="chassis"/>
+    <child  link="right_wheel"/>
+    <origin xyz="${rear_wheel_x} ${-wheel_separation/2} ${-body_height/2}" rpy="-${pi/2} 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <link name="right_wheel">
+    <xacro:cylinder_inertia mass="${wheel_mass}" r="${wheel_radius}" h="${wheel_width}"/>
+    <visual>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+      <material name="wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ============================================================ -->
+  <!-- BURUN TEKERİ (CASTER) — pasif, fixed joint                   -->
+  <!-- ============================================================ -->
+  <joint name="caster_wheel_joint" type="fixed">
+    <parent link="chassis"/>
+    <child  link="caster_wheel"/>
+    <origin xyz="${caster_x} 0 ${-body_height/2 - (wheel_radius - caster_radius)}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="caster_wheel">
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+      <material name="wheel_black">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <gazebo reference="caster_wheel">
+    <collision>
+      <surface>
+        <friction>
+          <ode>
+            <mu>0.0</mu>
+            <mu2>0.0</mu2>
+          </ode>
+        </friction>
+      </surface>
+    </collision>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- KAMERA                                                        -->
+  <!-- ============================================================ -->
+  <joint name="camera_joint" type="fixed">
+    <parent link="chassis"/>
+    <child  link="camera_link"/>
+    <origin xyz="${cam_x} 0 ${cam_z}" rpy="0 ${cam_pitch} 0"/>
+  </joint>
+
+  <link name="camera_link">
+    <visual>
+      <geometry>
+        <box size="0.05 0.08 0.05"/>
+      </geometry>
+      <material name="camera_dark">
+        <color rgba="0.1 0.1 0.1 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- ROS kamera optik frame standart yönelimi -->
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child  link="camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+  <link name="camera_optical_frame"/>
+
+  <!-- Kamera Gazebo sensörü -->
+  <gazebo reference="camera_link">
+    <sensor name="front_camera" type="camera">
+      <camera>
+        <horizontal_fov>1.047</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>100</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+      </camera>
+      <always_on>1</always_on>
+      <update_rate>30</update_rate>
+      <visualize>true</visualize>
+      <topic>/aircraft_taxi/image_raw</topic>
+    </sensor>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- LIDAR                                                         -->
+  <!-- ============================================================ -->
+  <joint name="lidar_joint" type="fixed">
+    <parent link="chassis"/>
+    <child  link="lidar_link"/>
+    <origin xyz="${lidar_x} 0 ${lidar_z}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="lidar_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.05" length="0.06"/>
+      </geometry>
+      <material name="lidar_color">
+        <color rgba="0.2 0.2 0.8 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <!-- Lidar Gazebo sensörü -->
+  <gazebo reference="lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <topic>/aircraft_taxi/scan</topic>
+      <update_rate>10</update_rate>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-1.5708</min_angle>
+            <max_angle>1.5708</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>15.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </lidar>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+    </sensor>
+  </gazebo>
+
+  <!-- ============================================================ -->
+  <!-- GAZEBO PLUGİN'LERİ                                            -->
+  <!-- ============================================================ -->
+
+  <!-- Diferansiyel sürüş plugin'i (Ignition Fortress) -->
+  <gazebo>
+    <plugin filename="gz-sim-diff-drive-system"
+            name="gz::sim::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <odom_publish_frequency>10</odom_publish_frequency>
+      <topic>/aircraft_taxi/cmd_vel</topic>
+      <odom_topic>/aircraft_taxi/odom</odom_topic>
+      <tf_topic>/tf</tf_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_link</child_frame_id>
+      <min_velocity>-3.0</min_velocity>
+      <max_velocity>3.0</max_velocity>
+      <min_acceleration>-3.0</min_acceleration>
+      <max_acceleration>3.0</max_acceleration>
+    </plugin>
+  </gazebo>
+
+  <!-- Joint state yayımcı plugin'i (Ignition Fortress) -->
+  <gazebo>
+    <plugin filename="gz-sim-joint-state-publisher-system"
+            name="gz::sim::systems::JointStatePublisher">
+      <topic>/aircraft_taxi/joint_states</topic>
+    </plugin>
+  </gazebo>
+
+  <!-- Gövde malzeme rengi -->
+  <gazebo reference="chassis">
+    <material>Gazebo/White</material>
+  </gazebo>
+
+  <gazebo reference="wings">
+    <material>Gazebo/White</material>
+  </gazebo>
+
+  <gazebo reference="tail_fin">
+    <material>Gazebo/Yellow</material>
+  </gazebo>
+
+  <gazebo reference="left_wheel">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <slip1>0.0</slip1>
+    <slip2>0.0</slip2>
+  </gazebo>
+
+  <gazebo reference="right_wheel">
+    <mu1>1.0</mu1>
+    <mu2>1.0</mu2>
+    <slip1>0.0</slip1>
+    <slip2>0.0</slip2>
+  </gazebo>
+
+</robot>
