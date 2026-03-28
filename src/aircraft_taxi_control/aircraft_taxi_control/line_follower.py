@@ -85,6 +85,11 @@ class LineFollower(Node):
         self.prev_error = 0.0
         self.integral = 0.0
         self.last_time = self.get_clock().now()
+
+        # --- Kayıp çizgi kurtarma durumu ---
+        self.lost_count = 0          # kaç kare üst üste çizgi kayıp
+        self.last_angular_z = 0.0   # son geçerli dönüş yönü
+        self.recovery_limit = 30    # kurtarma denemesi kare sayısı (~1 sn @ 30 Hz)
  
         # --- ROS arayüzleri ---
         self.cmd_pub = self.create_publisher(Twist, '/aircraft_taxi/cmd_vel', 10)
@@ -119,18 +124,35 @@ class LineFollower(Node):
         error = self._compute_error(results, img_w, img_h)
  
         if error is None:
-            self.get_logger().warn('Çizgi tespit edilemedi — araç durduruluyor.')
-            self._publish_stop()
+            self.lost_count += 1
+            if self.lost_count <= self.recovery_limit:
+                # Kurtarma: son bilinen yönde yavaşça ilerle
+                recovery_msg = Twist()
+                recovery_msg.linear.x = self.linear_speed * 0.3
+                recovery_msg.angular.z = self.last_angular_z
+                self.cmd_pub.publish(recovery_msg)
+                self.get_logger().warn(
+                    f'Çizgi kayıp — kurtarma modu ({self.lost_count}/{self.recovery_limit})'
+                )
+            else:
+                self._publish_stop()
+                self.get_logger().warn('Çizgi kayıp — araç durduruluyor.')
             if self.debug_image:
                 self._publish_debug(cv_image, None, None, img_center_x)
             return
- 
+
+        # Çizgi bulundu: kurtarma sayacını sıfırla, PID zamanını tazele
+        if self.lost_count > 0:
+            self.last_time = self.get_clock().now()
+        self.lost_count = 0
+
         centroid_x, mask_overlay = error
- 
+
         # Lateral hata: pozitif → çizgi sağda → sola dön (angular_z pozitif = sola)
         lateral_error = img_center_x - centroid_x
- 
+
         angular_z = self._compute_pid(lateral_error)
+        self.last_angular_z = angular_z
         self._publish_cmd(angular_z)
  
         if self.debug_image:
@@ -167,11 +189,14 @@ class LineFollower(Node):
         if binary.sum() == 0:
             return None
  
-        # Centroid hesapla
-        M = cv2.moments(binary)
+        # Centroid hesapla — sadece alt yarıyı kullan (uzak piksellerin etkisini yok say)
+        roi_start = img_h // 2
+        binary_roi = binary[roi_start:, :]
+
+        M = cv2.moments(binary_roi)
         if M['m00'] == 0:
             return None
- 
+
         cx = M['m10'] / M['m00']
         return cx, binary
  
@@ -186,6 +211,9 @@ class LineFollower(Node):
             dt = 1e-6
  
         self.integral += error * dt
+        # Integral windup koruması
+        integral_limit = self.max_angular / max(self.ki, 1e-9)
+        self.integral = float(np.clip(self.integral, -integral_limit, integral_limit))
         derivative = (error - self.prev_error) / dt
         self.prev_error = error
  
@@ -198,7 +226,9 @@ class LineFollower(Node):
     # ------------------------------------------------------------------
     def _publish_cmd(self, angular_z: float):
         msg = Twist()
-        msg.linear.x = self.linear_speed
+        # angular_z büyüdükçe lineer hızı düşür (min %30 hız korunur)
+        speed_factor = 1.0 - min(abs(angular_z) / self.max_angular, 1.0) * 0.7
+        msg.linear.x = self.linear_speed * speed_factor
         msg.angular.z = angular_z
         self.cmd_pub.publish(msg)
  
