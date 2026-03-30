@@ -6,9 +6,16 @@ import cv2
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, LaserScan
 from geometry_msgs.msg import Twist
 from ultralytics import YOLO
+from enum import Enum
+
+
+class SafetyState(Enum):
+    CLEAR     = 'clear'
+    REVERSING = 'reversing'
+    HALTED    = 'halted'
 
 
 def _imgmsg_to_cv2(msg: Image) -> np.ndarray:
@@ -79,7 +86,11 @@ class LineFollower(Node):
         self.declare_parameter('inference_width',       320)
         self.declare_parameter('inference_height',      240)
         self.declare_parameter('debug_image',           True)
-        self.declare_parameter('autostart',             True)  # başlangıçta otonom modu aç
+        self.declare_parameter('autostart',             True)   # başlangıçta otonom modu aç
+        self.declare_parameter('obstacle_distance',     2.0)   # engel eşik mesafesi (m)
+        self.declare_parameter('front_fov_deg',         30.0)  # ön tarama açısı (±derece)
+        self.declare_parameter('reverse_speed',         0.2)   # geri gidiş hızı (m/s)
+        self.declare_parameter('reverse_duration',      2.0)   # geri gidiş süresi (s)
 
         model_path            = self.get_parameter('model_path').value
         self.linear_speed     = self.get_parameter('linear_speed').value
@@ -98,8 +109,12 @@ class LineFollower(Node):
         inf_w                  = int(self.get_parameter('inference_width').value)
         inf_h                  = int(self.get_parameter('inference_height').value)
         self.debug_image       = self.get_parameter('debug_image').value
-        self.autostart         = bool(self.get_parameter('autostart').value)
-        self.inference_size    = (inf_w, inf_h)
+        self.autostart          = bool(self.get_parameter('autostart').value)
+        self.obstacle_distance  = float(self.get_parameter('obstacle_distance').value)
+        self.front_fov_deg      = float(self.get_parameter('front_fov_deg').value)
+        self.reverse_speed      = float(self.get_parameter('reverse_speed').value)
+        self.reverse_duration   = float(self.get_parameter('reverse_duration').value)
+        self.inference_size     = (inf_w, inf_h)
 
         # Model yükle
         if not model_path:
@@ -137,6 +152,13 @@ class LineFollower(Node):
         self.line_direction     = 0
         self.last_line_position = 0.0
 
+        # ── Güvenlik durum makinesi ───────────────────────────────────
+        self.safety_state       = SafetyState.CLEAR
+        self.obstacle_detected  = False
+        self.min_obstacle_range = float('inf')
+        self.reverse_start      = None
+        self.last_warn_time     = None   # ilk kullanımda atanacak
+
         # ── ROS arayüzleri ────────────────────────────────────────────
         qos_camera = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -160,6 +182,12 @@ class LineFollower(Node):
             Image,
             '/aircraft_taxi/image_raw',
             self._image_callback,
+            qos_camera
+        )
+        self.scan_sub = self.create_subscription(
+            LaserScan,
+            '/aircraft_taxi/scan',
+            self._scan_callback,
             qos_camera
         )
 
@@ -205,6 +233,29 @@ class LineFollower(Node):
         ]
         for ln in lines:
             self.get_logger().info(ln)
+
+    # ──────────────────────────────────────────────────────────────────
+    # Lidar callback: ön tarama bölgesinde engel kontrolü
+    # ──────────────────────────────────────────────────────────────────
+    def _scan_callback(self, msg: LaserScan):
+        n = len(msg.ranges)
+        if n == 0:
+            return
+        # Lidar ±90°, n örnek → merkez index = ön yön (0°)
+        half_win = int(self.front_fov_deg / 180.0 * n)
+        center   = n // 2
+        front    = msg.ranges[max(0, center - half_win): center + half_win]
+        valid    = [
+            r for r in front
+            if not math.isnan(r) and not math.isinf(r)
+            and msg.range_min < r < msg.range_max
+        ]
+        if valid and min(valid) < self.obstacle_distance:
+            self.obstacle_detected  = True
+            self.min_obstacle_range = min(valid)
+        else:
+            self.obstacle_detected  = False
+            self.min_obstacle_range = float('inf')
 
     # ──────────────────────────────────────────────────────────────────
     # ROS callback: görüntüyü buffer'a yazar
@@ -366,12 +417,27 @@ class LineFollower(Node):
             cv2.putText(img, arrow, (w // 2 - 70, h - 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        # Klavye hatırlatıcısı (beklemede iken)
-        if not self.vision_active and not self.manual_mode:
+        # Klavye hatırlatıcısı (beklemede iken, engel yoksa)
+        if not self.vision_active and not self.manual_mode and self.safety_state == SafetyState.CLEAR:
             cv2.putText(img,
                         'SPACE:Otonom  WASD:Manuel  Q:Cikis',
                         (10, h - 15),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1)
+
+        # Engel uyarısı banner'ı (güvenlik durumu CLEAR değilse)
+        if self.safety_state != SafetyState.CLEAR:
+            if self.safety_state == SafetyState.REVERSING:
+                bg_color = (0, 130, 255)   # turuncu
+                label    = 'GERİ GİDİYOR...'
+            else:
+                bg_color = (0, 0, 220)     # kırmızı
+                label    = 'ENGEL VAR — DURDU'
+            dist_str = (f'{self.min_obstacle_range:.2f}m'
+                        if self.min_obstacle_range < float('inf') else '?')
+            cv2.rectangle(img, (0, h - 55), (w, h), bg_color, -1)
+            cv2.putText(img, f'[!] {label}  ({dist_str})',
+                        (10, h - 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
 
     # ──────────────────────────────────────────────────────────────────
     # GUI timer: pencereyi güncelle + klavyeyi oku (30 Hz)
@@ -581,12 +647,52 @@ class LineFollower(Node):
         return float(np.clip(target, -self.max_steering, self.max_steering))
 
     # ──────────────────────────────────────────────────────────────────
-    # 20 Hz kontrol yayını
+    # 20 Hz kontrol yayını — güvenlik durumu en yüksek öncelik
     # ──────────────────────────────────────────────────────────────────
     def _control_timer_callback(self):
+        now = self.get_clock().now()
+        if self.last_warn_time is None:
+            self.last_warn_time = now
+
         msg = Twist()
-        msg.linear.x  = float(self.current_speed)
-        msg.angular.z = float(self.current_steering)
+
+        # ── CLEAR → REVERSING geçişi ──────────────────────────────────
+        if self.safety_state == SafetyState.CLEAR and self.obstacle_detected:
+            self.safety_state  = SafetyState.REVERSING
+            self.reverse_start = now
+            self.get_logger().warn(
+                f'ENGEL TESPIT EDILDI! Mesafe: {self.min_obstacle_range:.2f}m'
+                ' — Geri gidiliyor...'
+            )
+
+        # ── Durum bazlı komut ─────────────────────────────────────────
+        if self.safety_state == SafetyState.REVERSING:
+            elapsed = (now - self.reverse_start).nanoseconds * 1e-9
+            if elapsed < self.reverse_duration:
+                msg.linear.x = -self.reverse_speed
+            else:
+                self.safety_state   = SafetyState.HALTED
+                self.last_warn_time = now
+
+        elif self.safety_state == SafetyState.HALTED:
+            msg.linear.x = 0.0
+            # Her 2 saniyede bir uyarı
+            if (now - self.last_warn_time).nanoseconds * 1e-9 > 2.0:
+                self.get_logger().warn(
+                    f'ENGEL VAR! Mesafe: {self.min_obstacle_range:.2f}m'
+                    ' — Yol acilinca devam edilecek.'
+                )
+                self.last_warn_time = now
+            # Engel geçti mi?
+            if not self.obstacle_detected:
+                self.get_logger().info('Engel gecti — normal moda donuluyor.')
+                self.safety_state = SafetyState.CLEAR
+
+        else:
+            # CLEAR: normal hareket
+            msg.linear.x  = float(self.current_speed)
+            msg.angular.z = float(self.current_steering)
+
         self.cmd_pub.publish(msg)
 
     def destroy_node(self):

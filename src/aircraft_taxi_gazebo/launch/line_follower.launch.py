@@ -62,6 +62,22 @@ def generate_launch_description():
             description='Blind turn sabit direksiyon açısı (rad/s)'
         ),
         DeclareLaunchArgument(
+            'obstacle_distance', default_value='2.0',
+            description='Engel tepki mesafesi (m)'
+        ),
+        DeclareLaunchArgument(
+            'front_fov_deg', default_value='30.0',
+            description='Lidar ön tarama açısı (±derece, toplam 2x)'
+        ),
+        DeclareLaunchArgument(
+            'reverse_speed', default_value='0.2',
+            description='Geri gidiş hızı (m/s)'
+        ),
+        DeclareLaunchArgument(
+            'reverse_duration', default_value='2.0',
+            description='Geri gidiş süresi (s)'
+        ),
+        DeclareLaunchArgument(
             'debug_image', default_value='true',
             description='Debug görüntüsü ROS topic\'e yayımla'
         ),
@@ -90,6 +106,10 @@ def generate_launch_description():
                 'kd_heading':           LaunchConfiguration('kd_heading'),
                 'max_steering':         LaunchConfiguration('max_steering'),
                 'blind_turn_steering':  LaunchConfiguration('blind_turn_steering'),
+                'obstacle_distance':    LaunchConfiguration('obstacle_distance'),
+                'front_fov_deg':        LaunchConfiguration('front_fov_deg'),
+                'reverse_speed':        LaunchConfiguration('reverse_speed'),
+                'reverse_duration':     LaunchConfiguration('reverse_duration'),
                 'autostart':            LaunchConfiguration('autostart'),
                 'debug_image':          LaunchConfiguration('debug_image'),
                 'use_sim_time':         True,
