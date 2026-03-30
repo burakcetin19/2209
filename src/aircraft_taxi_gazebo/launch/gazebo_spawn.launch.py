@@ -94,4 +94,20 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # 6. Foxglove Studio WebSocket bridge (ws://localhost:8765)
+        Node(
+            package='foxglove_bridge',
+            executable='foxglove_bridge',
+            name='foxglove_bridge',
+            parameters=[{
+                'port': 8765,
+                'address': '0.0.0.0',
+                'tls': False,
+                'topic_whitelist': ['.*'],
+                'param_whitelist': ['.*'],
+                'use_sim_time': True,
+            }],
+            output='screen',
+        ),
+
     ])
